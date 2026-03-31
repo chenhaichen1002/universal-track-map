@@ -3,19 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Tracker - City Focus Edition</title>
+    <title>Global Tracker Pro - High Visibility</title>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDHM7DZddYSOlafGz4Et_u75D6R2-IH12A&callback=initMap" async defer></script>
     <style>
-        :root { --primary: #e60012; --bg: #f8f9fa; }
+        :root { --primary: #e60012; --bg: #f0f2f5; }
         body { font-family: 'Segoe UI', Meiryo, sans-serif; background: var(--bg); margin: 0; padding: 15px; }
-        .container { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 360px 1fr; gap: 20px; }
-        .panel { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.08); height: 92vh; display: flex; flex-direction: column; }
-        h1 { font-size: 1.1rem; color: var(--primary); margin: 0 0 15px 0; border-bottom: 2px solid var(--primary); padding-bottom: 5px; }
-        input, select, button { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; font-size: 0.9rem; margin-bottom: 10px; }
-        button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; height: 45px; }
-        #map { height: 92vh; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.1); }
-        .history-list { flex-grow: 1; overflow-y: auto; border-top: 1px solid #eee; margin-top: 10px; }
-        .status-item { padding: 8px; border-bottom: 1px solid #f0f0f0; font-size: 0.8rem; line-height: 1.4; }
+        .container { max-width: 1300px; margin: 0 auto; display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
+        .panel { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); height: 92vh; display: flex; flex-direction: column; }
+        h1 { font-size: 1.2rem; color: var(--primary); margin: 0 0 15px 0; display: flex; align-items: center; gap: 8px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        input, select, button { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 0.95rem; margin-bottom: 10px; }
+        button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:hover { opacity: 0.8; }
+        #map { height: 92vh; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
+        .history-list { flex-grow: 1; overflow-y: auto; margin-top: 10px; border-top: 1px solid #eee; }
+        .status-item { padding: 10px; border-bottom: 1px solid #f0f0f0; font-size: 0.8rem; line-height: 1.4; }
         .status-item.skipped { color: #bbb; background: #fafafa; }
         @media (max-width: 900px) { .container { grid-template-columns: 1fr; } #map, .panel { height: auto; } }
     </style>
@@ -24,11 +25,11 @@
 
 <div class="container">
     <div class="panel">
-        <h1>🚀 International Tracker</h1>
-        <input type="text" id="carrier-query" placeholder="配送業者を検索..." oninput="searchCarriers(this.value)">
+        <h1>📦 Logistics Visualizer</h1>
+        <input type="text" id="carrier-query" placeholder="業者を検索 (Yamato, Post...)" oninput="searchCarriers(this.value)">
         <select id="carrier-select" size="4"></select>
-        <input type="text" id="track-no" placeholder="追跡番号 (例: AA123456789JP)" value="">
-        <button onclick="startTracking()">ルートを表示</button>
+        <input type="text" id="track-no" placeholder="追跡番号を入力" value="">
+        <button onclick="startTracking()">ルートを描画</button>
         <div class="history-list" id="history-list"></div>
     </div>
     <div id="map"></div>
@@ -45,7 +46,7 @@
     function initMap() {
         map = new google.maps.Map(document.getElementById("map"), {
             zoom: 5, center: { lat: 35.68, lng: 139.76 },
-            disableDefaultUI: false
+            styles: [{ featureType: "poi", stylers: [{ visibility: "off" }] }]
         });
         searchCarriers("");
     }
@@ -92,7 +93,7 @@
         const historyList = document.getElementById("history-list");
         historyList.innerHTML = "";
         const pathCoords = [];
-        let lastCity = ""; // 都市レベルでの重複チェック用
+        let lastCity = ""; 
 
         const geocoder = new google.maps.Geocoder();
 
@@ -102,20 +103,18 @@
             let fullDesc = (node.description || "").trim();
             let cleanCity = "";
 
-            // --- 都市名クレンジングロジック ---
-            if (fullDesc.includes("CHINA") || fullDesc.includes("JAPAN")) {
-                // 1. 英単語を抽出
-                const words = fullDesc.match(/[A-Z]{3,}/g) || [];
-                // 2. 国名を除外して、最初の単語（都市名）を取得
-                cleanCity = words.filter(w => w !== "CHINA" && w !== "JAPAN")[0] || "";
+            // --- 1. 都市名クレンジング (長野誤判定防止) ---
+            if (fullDesc.includes("CHINA") || fullDesc.includes("JAPAN") || /^[A-Z\s0-9]+$/.test(fullDesc)) {
+                const words = fullDesc.match(/[A-Z]{2,}/g) || []; // 2文字以上の英単語のみ抽出
+                cleanCity = words.filter(w => w !== "CHINA" && w !== "JAPAN" && w !== "CP")[0] || "";
             } else {
-                // 国内便などはそのまま
                 cleanCity = fullDesc;
             }
 
+            // --- 2. スキップ・重複判定 ---
             const isServiceStatus = skipKeywords.some(key => status.includes(key));
             const shouldSkip = isServiceStatus || !cleanCity || cleanCity === "";
-            const isDuplicate = cleanCity === lastCity;
+            const isDuplicate = (cleanCity.toUpperCase() === lastCity.toUpperCase());
 
             const item = document.createElement("div");
             item.className = `status-item ${shouldSkip || isDuplicate ? 'skipped' : ''}`;
@@ -127,15 +126,31 @@
             const coord = await getBestCoord(geocoder, cleanCity, carrierId);
             if (coord) {
                 pathCoords.push(coord);
-                lastCity = cleanCity; // 成功した都市名を記録
-                markers.push(new google.maps.Marker({
-                    position: coord, map, label: { text: pathCoords.length.toString(), color: "white" }
-                }));
+                lastCity = cleanCity; 
+                
+                // --- 3. ピンの設定 (視認性向上) ---
+                const marker = new google.maps.Marker({
+                    position: coord,
+                    map: map,
+                    label: { text: pathCoords.length.toString(), color: "white", fontWeight: "bold" },
+                    zIndex: 999, // 線よりも上に表示
+                    optimized: false 
+                });
+                markers.push(marker);
             }
         }
 
+        // --- 4. 線の設定 (細く、半透明に) ---
         if (pathCoords.length > 1) {
-            polyline = new google.maps.Polyline({ path: pathCoords, geodesic: true, strokeColor: "#e60012", strokeWeight: 4, map });
+            polyline = new google.maps.Polyline({
+                path: pathCoords,
+                geodesic: true,
+                strokeColor: "#e60012",
+                strokeOpacity: 0.6, // 透明度を上げて地図を透かす
+                strokeWeight: 3,    // 太さを抑える
+                map: map,
+                zIndex: 1
+            });
             const bounds = new google.maps.LatLngBounds();
             pathCoords.forEach(c => bounds.extend(c));
             map.fitBounds(bounds);
