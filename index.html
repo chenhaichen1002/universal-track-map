@@ -4,33 +4,38 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Global Delivery Tracker</title>
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB39ge2dfdGoL_QPUsKw8A-o7aDuX5kO54" async defer></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyB39ge2dfdGoL_QPUsKw8A-o7aDuX5kO54&callback=initMap" async defer></script>
     <style>
-        body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 20px; background: #f4f7f6; }
-        .container { max-width: 900px; margin: 0 auto; }
-        #map { height: 500px; width: 100%; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-        .controls { background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; display: flex; gap: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-        input, select, button { padding: 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 16px; }
-        button { background: #4285F4; color: white; border: none; cursor: pointer; font-weight: bold; }
-        button:hover { background: #357ae8; }
-        #status { margin-top: 10px; color: #666; font-size: 14px; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; padding: 20px; background: #f0f2f5; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        h2 { text-align: center; color: #1a73e8; }
+        .controls { background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; display: flex; gap: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); flex-wrap: wrap; }
+        input, select, button { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 15px; outline: none; }
+        input { flex: 1; min-width: 200px; }
+        button { background: #1a73e8; color: white; border: none; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        button:hover { background: #1557b0; }
+        #map { height: 550px; width: 100%; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); background: #e5e3df; }
+        #status-box { margin-top: 15px; padding: 15px; background: #fff; border-left: 5px solid #1a73e8; border-radius: 4px; display: none; }
+        .loading { color: #666; font-style: italic; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>📦 荷物追跡マップ</h2>
+    <h2>📦 Global Delivery Tracker</h2>
+    
     <div class="controls">
         <select id="carrier">
-            <option value="jp.yamato">ヤマト運輸</option>
-            <option value="jp.sagawa">佐川急便</option>
-            <option value="jp.japanpost">日本郵便</option>
+            <option value="jp.yamato">ヤマト運輸 (Yamato)</option>
+            <option value="jp.sagawa">佐川急便 (Sagawa)</option>
+            <option value="jp.japanpost">日本郵便 (Japan Post)</option>
             <option value="cn.china-post">China Post (中国郵政)</option>
         </select>
         <input type="text" id="trackNo" placeholder="追跡番号を入力" value="479797316751">
         <button onclick="startTracking()">追跡開始</button>
     </div>
-    <div id="status">番号を入力してボタンを押してください</div>
+
+    <div id="status-box"></div>
     <div id="map"></div>
 </div>
 
@@ -43,31 +48,41 @@
         map = new google.maps.Map(document.getElementById("map"), {
             zoom: 5,
             center: { lat: 35.6895, lng: 139.6917 },
-            mapTypeControl: false
+            mapTypeControl: false,
+            streetViewControl: false
         });
     }
 
     async function startTracking() {
         const carrier = document.getElementById("carrier").value;
         const trackNo = document.getElementById("trackNo").value;
-        const statusDiv = document.getElementById("status");
+        const statusBox = document.getElementById("status-box");
         
-        statusDiv.innerText = "データを取得中...";
+        statusBox.style.display = "block";
+        statusBox.innerHTML = '<span class="loading">データを取得中...</span>';
+        
         clearMap();
 
+        // CORS回避プロキシ
+        const proxy = "https://corsproxy.io/?";
+        const targetApi = `https://tracker.delivery/api/v1/trackers/${carrier}/${trackNo}`;
+
         try {
-            const response = await fetch(`https://tracker.delivery/api/v1/trackers/${carrier}/${trackNo}`);
-            if (!response.ok) throw new Error("荷物が見つかりません");
-            const data = await response.json();
+            const response = await fetch(proxy + encodeURIComponent(targetApi));
+            if (!response.ok) throw new Error("荷物情報が見つかりません。");
             
+            const data = await response.json();
             const progresses = data.progresses;
+            if (!progresses || progresses.length === 0) throw new Error("追跡データがありません。");
+
             const pathCoords = [];
             const geocoder = new google.maps.Geocoder();
 
-            for (const [index, p] of progresses.entries()) {
+            for (let i = 0; i < progresses.length; i++) {
+                const p = progresses[i];
                 if (!p.location) continue;
 
-                // 判断基準ロジック：詳細 -> 失敗なら市町村
+                // 判断基準: 詳細 -> 失敗なら市町村
                 const coord = await getCoordinateWithFallback(geocoder, p.location, carrier);
                 
                 if (coord) {
@@ -75,7 +90,7 @@
                     const marker = new google.maps.Marker({
                         position: coord,
                         map: map,
-                        label: (index + 1).toString(),
+                        label: { text: (i + 1).toString(), color: "white" },
                         title: `${p.time}: ${p.status}`
                     });
                     markers.push(marker);
@@ -86,34 +101,31 @@
             polyline = new google.maps.Polyline({
                 path: pathCoords,
                 geodesic: true,
-                strokeColor: "#4285F4",
-                strokeOpacity: 0.8,
-                strokeWeight: 3,
+                strokeColor: "#1a73e8",
+                strokeOpacity: 0.7,
+                strokeWeight: 4,
                 map: map
             });
 
-            // 全体が見えるようにズーム
             if (pathCoords.length > 0) {
                 const bounds = new google.maps.LatLngBounds();
                 pathCoords.forEach(c => bounds.extend(c));
                 map.fitBounds(bounds);
-                statusDiv.innerText = `最新状況: ${progresses[progresses.length-1].status}`;
+                
+                const latest = progresses[progresses.length - 1];
+                statusBox.innerHTML = `<strong>最新状況:</strong> ${latest.status} (${latest.location})<br><small>${latest.time}</small>`;
             }
 
         } catch (error) {
-            statusDiv.innerText = "エラー: " + error.message;
+            statusBox.innerHTML = `<span style="color:red;">エラー: ${error.message}</span>`;
         }
     }
 
     async function getCoordinateWithFallback(geocoder, loc, carrier) {
-        // 国を判定（China PostならChina、それ以外はJapan）
         const country = carrier.includes("cn.") ? "China" : "Japan";
-        
-        // 1. 詳細住所で検索
         let res = await geocode(geocoder, `${loc}, ${country}`);
         if (res) return res;
 
-        // 2. 失敗時：市町村のみ抽出して検索
         const cityMatch = loc.match(/.*?[市区町村]/);
         if (cityMatch) {
             return await geocode(geocoder, `${cityMatch[0]}, ${country}`);
@@ -123,8 +135,9 @@
 
     function geocode(geocoder, address) {
         return new Promise(resolve => {
-            geocoder.geocode({ address }, (results, status) => {
-                resolve(status === "OK" ? results[0].geometry.location : null);
+            geocoder.geocode({ address: address }, (results, status) => {
+                if (status === "OK") resolve(results[0].geometry.location);
+                else resolve(null);
             });
         });
     }
