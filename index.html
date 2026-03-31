@@ -3,24 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Tracker - International Post Edition</title>
+    <title>Global Tracker - City Focus Edition</title>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDHM7DZddYSOlafGz4Et_u75D6R2-IH12A&callback=initMap" async defer></script>
     <style>
-        :root { --primary: #e60012; --bg: #fdfdfe; } /* 郵便カラー */
-        body { font-family: 'Helvetica Neue', Arial, sans-serif; background: var(--bg); margin: 0; padding: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
-        .panel { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); height: 90vh; display: flex; flex-direction: column; }
-        h1 { font-size: 1.2rem; color: var(--primary); margin: 0 0 15px 0; display: flex; align-items: center; gap: 8px; }
-        .form-group { margin-bottom: 15px; }
-        label { display: block; font-size: 0.8rem; margin-bottom: 5px; color: #555; font-weight: bold; }
-        input, select, button { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 1rem; }
-        button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; transition: 0.2s; }
-        button:hover { opacity: 0.8; }
-        #map { height: 90vh; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
-        .history-list { flex-grow: 1; margin-top: 15px; overflow-y: auto; border-top: 2px solid #f0f0f0; }
-        .status-item { padding: 12px; border-bottom: 1px solid #eee; font-size: 0.85rem; line-height: 1.5; }
-        .status-item.skipped { background: #f8f8f8; color: #aaa; }
-        .status-item.skipped b { color: #ccc; }
+        :root { --primary: #e60012; --bg: #f8f9fa; }
+        body { font-family: 'Segoe UI', Meiryo, sans-serif; background: var(--bg); margin: 0; padding: 15px; }
+        .container { max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: 360px 1fr; gap: 20px; }
+        .panel { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.08); height: 92vh; display: flex; flex-direction: column; }
+        h1 { font-size: 1.1rem; color: var(--primary); margin: 0 0 15px 0; border-bottom: 2px solid var(--primary); padding-bottom: 5px; }
+        input, select, button { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; box-sizing: border-box; font-size: 0.9rem; margin-bottom: 10px; }
+        button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; height: 45px; }
+        #map { height: 92vh; border-radius: 12px; box-shadow: 0 2px 15px rgba(0,0,0,0.1); }
+        .history-list { flex-grow: 1; overflow-y: auto; border-top: 1px solid #eee; margin-top: 10px; }
+        .status-item { padding: 8px; border-bottom: 1px solid #f0f0f0; font-size: 0.8rem; line-height: 1.4; }
+        .status-item.skipped { color: #bbb; background: #fafafa; }
         @media (max-width: 900px) { .container { grid-template-columns: 1fr; } #map, .panel { height: auto; } }
     </style>
 </head>
@@ -28,24 +24,13 @@
 
 <div class="container">
     <div class="panel">
-        <h1>📮 International Tracker</h1>
-        
-        <div class="form-group">
-            <label>配送業者の検索</label>
-            <input type="text" id="carrier-query" placeholder="例: Japan Post, Yamato" oninput="searchCarriers(this.value)">
-            <select id="carrier-select" size="4" style="margin-top:5px;"></select>
-        </div>
-
-        <div class="form-group">
-            <label>追跡番号 (例: AA123456789JP)</label>
-            <input type="text" id="track-no" placeholder="番号を入力" value="">
-        </div>
-
-        <button onclick="startTracking()">追跡を開始</button>
-
+        <h1>🚀 International Tracker</h1>
+        <input type="text" id="carrier-query" placeholder="配送業者を検索..." oninput="searchCarriers(this.value)">
+        <select id="carrier-select" size="4"></select>
+        <input type="text" id="track-no" placeholder="追跡番号 (例: AA123456789JP)" value="">
+        <button onclick="startTracking()">ルートを表示</button>
         <div class="history-list" id="history-list"></div>
     </div>
-
     <div id="map"></div>
 </div>
 
@@ -55,13 +40,12 @@
     const PROXY = "https://corsproxy.io/?";
     const AUTH_KEY = "TRACKQL-API-KEY AA6d1TAttqgabHvJkWx5asrw:hpGjoOr1gtcz0PNAgxlyenZBDOqNd7xKNUuOLdXiz3";
     
-    // スキップ条件: 事務的なステータス + ヤマト/郵便の「持ち出し」
-    const skipKeywords = ["依頼受付", "変更", "持ち出し中", "不在連絡", "転送"];
+    const skipKeywords = ["依頼受付", "変更", "持ち出し中", "不在連絡", "転送", "調査中"];
 
     function initMap() {
         map = new google.maps.Map(document.getElementById("map"), {
             zoom: 5, center: { lat: 35.68, lng: 139.76 },
-            styles: [{ featureType: "poi", stylers: [{ visibility: "off" }] }]
+            disableDefaultUI: false
         });
         searchCarriers("");
     }
@@ -92,7 +76,6 @@
         if (!carrierId || !trackNo) return;
 
         const query = `query($c:ID!,$n:String!){track(carrierId:$c,trackingNumber:$n){events(last:40){edges{node{time description status{name}}}}}}`;
-        
         try {
             const res = await fetch(PROXY + encodeURIComponent(API_URL), {
                 method: 'POST',
@@ -101,7 +84,7 @@
             });
             const result = await res.json();
             if (result.data.track) renderRoute(result.data.track.events.edges, carrierId);
-        } catch (e) { alert("エラーが発生しました"); }
+        } catch (e) { console.error(e); }
     }
 
     async function renderRoute(edges, carrierId) {
@@ -109,32 +92,42 @@
         const historyList = document.getElementById("history-list");
         historyList.innerHTML = "";
         const pathCoords = [];
+        let lastCity = ""; // 都市レベルでの重複チェック用
+
         const geocoder = new google.maps.Geocoder();
 
         for (const edge of edges) {
             const node = edge.node;
-            const desc = (node.description || "").trim();
             const status = node.status.name;
+            let fullDesc = (node.description || "").trim();
+            let cleanCity = "";
 
-            // スキップ判定
-            // 1. キーワードに該当する
-            // 2. 国際郵便特有の「場所が空白」(&nbsp; や 空文字)
-            // 3. 場所が国名(CHINA/JAPAN)のみで都市名がない
-            const isInvalidLocation = !desc || desc === "" || desc === "CHINA" || desc === "JAPAN";
-            const isServiceStatus = skipKeywords.some(key => status.includes(key) || desc.includes(key));
-            
-            const shouldSkipMap = isInvalidLocation || isServiceStatus;
+            // --- 都市名クレンジングロジック ---
+            if (fullDesc.includes("CHINA") || fullDesc.includes("JAPAN")) {
+                // 1. 英単語を抽出
+                const words = fullDesc.match(/[A-Z]{3,}/g) || [];
+                // 2. 国名を除外して、最初の単語（都市名）を取得
+                cleanCity = words.filter(w => w !== "CHINA" && w !== "JAPAN")[0] || "";
+            } else {
+                // 国内便などはそのまま
+                cleanCity = fullDesc;
+            }
+
+            const isServiceStatus = skipKeywords.some(key => status.includes(key));
+            const shouldSkip = isServiceStatus || !cleanCity || cleanCity === "";
+            const isDuplicate = cleanCity === lastCity;
 
             const item = document.createElement("div");
-            item.className = `status-item ${shouldSkipMap ? 'skipped' : ''}`;
-            item.innerHTML = `<b>${status}</b><br><small>${node.time}</small><br>${desc || "(場所不明)"}`;
+            item.className = `status-item ${shouldSkip || isDuplicate ? 'skipped' : ''}`;
+            item.innerHTML = `<b>${status}</b><br><small>${node.time}</small><br>${node.description || "---"}`;
             historyList.appendChild(item);
 
-            if (shouldSkipMap) continue;
+            if (shouldSkip || isDuplicate) continue;
 
-            const coord = await getBestCoord(geocoder, desc, carrierId);
+            const coord = await getBestCoord(geocoder, cleanCity, carrierId);
             if (coord) {
                 pathCoords.push(coord);
+                lastCity = cleanCity; // 成功した都市名を記録
                 markers.push(new google.maps.Marker({
                     position: coord, map, label: { text: pathCoords.length.toString(), color: "white" }
                 }));
@@ -149,12 +142,12 @@
         }
     }
 
-    async function getBestCoord(geocoder, desc, carrierId) {
+    async function getBestCoord(geocoder, city, carrierId) {
         const country = carrierId.startsWith("cn.") ? "China" : "Japan";
-        let res = await geocode(geocoder, `${desc}, ${country}`);
+        let res = await geocode(geocoder, `${city}, ${country}`);
         if (!res) {
-            const cityMatch = desc.match(/.*?[市区町村]/);
-            if (cityMatch) res = await geocode(geocoder, `${cityMatch[0]}, ${country}`);
+            const match = city.match(/.*?[市区町村]/);
+            if (match) res = await geocode(geocoder, `${match[0]}, ${country}`);
         }
         return res;
     }
