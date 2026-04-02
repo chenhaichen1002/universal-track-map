@@ -42,11 +42,10 @@
     const PROXY = "https://corsproxy.io/?";
     const AUTH_KEY = "TRACKQL-API-KEY AA6d1TAttqgabHvJkWx5asrw:hpGjoOr1gtcz0PNAgxlyenZBDOqNd7xKNUuOLdXiz3";
     
-    // マップに表示しないキーワード（地名を含まない純粋なステータス）
+    // 場所を持たない、または地図表示が不要なキーワード
     const skipKeywords = [
-        "税関保留", "税関から受領", "税関へ提示", "税関検査", 
-        "引受", "インターネット", "ＩＶＲ", "配達希望受付", 
-        "依頼受付", "変更", "調査中", "受領", "保留"
+        "インターネット", "ＩＶＲ", "配達希望受付", "税関保留", "税関から受領", 
+        "税関へ提示", "依頼受付", "変更", "調査中"
     ];
 
     function initMap() {
@@ -81,7 +80,7 @@
     async function startTracking() {
         const carrierId = document.getElementById("carrier-select").value;
         const trackNo = document.getElementById("track-no").value.trim();
-        if (!carrierId || !trackNo) return alert("入力してください");
+        if (!carrierId || !trackNo) return alert("業者と番号を入力してください");
 
         const query = `query($c:ID!,$n:String!){track(carrierId:$c,trackingNumber:$n){events(last:40){edges{node{time description status{name}}}}}}`;
         try {
@@ -104,6 +103,7 @@
         const historyList = document.getElementById("history-list");
         historyList.innerHTML = "";
         const pathCoords = [];
+        let lastValidCoord = null;
         let lastValidCity = "";
 
         const geocoder = new google.maps.Geocoder();
@@ -113,31 +113,26 @@
             const status = node.status.name;
             const fullDesc = (node.description || "").trim();
             
-            // 1. 時刻表示（nullの場合は空文字）
+            // 1. 時刻の処理 (nullの場合は非表示)
             const timeStr = node.time ? `<small>${new Date(node.time).toLocaleString('ja-JP')}</small>` : "";
 
-            // 2. 地名抽出
+            // 2. 地名抽出ロジック
             let cleanCity = "";
             if (fullDesc.includes(" - ")) {
                 // "都島郵便局 - 到着" -> "都島郵便局"
                 cleanCity = fullDesc.split(" - ")[0].trim();
-            } else {
-                // ハイフンがない場合、それがステータス名のみでないかチェック
-                const isOnlyStatus = skipKeywords.some(key => fullDesc === key);
-                if (!isOnlyStatus) {
-                    cleanCity = fullDesc;
-                }
             }
 
-            // 国際郵便サフィックス削除 (.EMS, .CP, .CNなど)
-            cleanCity = cleanCity.replace(/\.[A-Z0-9]+$/i, "");
+            // 国際郵便などのドット付きを除去 (SHIJIAZH.EMS -> SHIJIAZH)
+            if (cleanCity) cleanCity = cleanCity.replace(/\.[A-Z0-9]+$/i, "");
 
-            // 3. マップ表示スキップ判定
-            const isForbiddenWord = skipKeywords.some(key => fullDesc.includes(key) || status.includes(key));
-            // 場所が特定できない、または除外ワードに該当する場合はマップ描画しない
-            const shouldSkipMap = isForbiddenWord || !cleanCity || cleanCity === "インターネット・ＩＶＲ";
+            // 3. マップ表示判定
+            // - インターネット系キーワードが含まれる場合はスキップ
+            // - descriptionに " - " が含まれない、かつ場所が特定できない場合はスキップ
+            const isServiceWord = skipKeywords.some(key => fullDesc.includes(key) || status.includes(key));
+            const shouldSkipMap = isServiceWord || !cleanCity || !node.time;
 
-            // 履歴リストに追加（スキップ対象は色を薄くする）
+            // 履歴リストに追加
             const item = document.createElement("div");
             item.className = `status-item ${shouldSkipMap ? 'skipped' : ''}`;
             item.innerHTML = `<b>${status}</b><br>${timeStr}<br>${fullDesc}`;
@@ -145,14 +140,22 @@
 
             if (shouldSkipMap) continue;
 
-            // 4. 重複場所の判定（同じ場所ならピンを立てない）
+            // 4. 重複場所の判定 (名前が同じ、または座標が極めて近い場合はスキップ)
             if (cleanCity.toUpperCase() === lastValidCity.toUpperCase()) continue;
 
-            // 5. 座標取得
-            const coord = await getBestCoord(geocoder, cleanCity, carrierId, fullDesc);
+            // 5. 座標取得と描画
+            const coord = await getBestCoord(geocoder, cleanCity, carrierId);
             if (coord) {
+                // 座標ベースでの重複チェック (同じ郵便局内のステータス変化など)
+                if (lastValidCoord && 
+                    Math.abs(coord.lat() - lastValidCoord.lat()) < 0.0005 && 
+                    Math.abs(coord.lng() - lastValidCoord.lng()) < 0.0005) {
+                    continue;
+                }
+
                 pathCoords.push(coord);
-                lastValidCity = cleanCity; // 成功した地名を保存
+                lastValidCoord = coord;
+                lastValidCity = cleanCity;
                 
                 const marker = new google.maps.Marker({
                     position: coord,
@@ -180,17 +183,17 @@
         }
     }
 
-    async function getBestCoord(geocoder, city, carrierId, fullDesc) {
-        let countryHint = "Japan";
-        
-        // 中国またはアルファベットのみの地名は中国として検索（国際郵便対応）
-        if (/^[A-Z\s]+$/.test(city) || fullDesc.toUpperCase().includes("CHINA") || carrierId.includes("cn.")) {
-            countryHint = "China";
+    async function getBestCoord(geocoder, city, carrierId) {
+        // 郵便局の場合は「郵便局名 + 日本」で検索することで確実にヒットさせる
+        let query = city;
+        if (city.includes("郵便局")) {
+            query = city + ", 日本";
+        } else if (/^[A-Z\s]+$/.test(city) || carrierId.includes("cn.")) {
+            // アルファベットのみ、または中国業者の場合は中国ヒント
+            query = city + ", China";
+        } else {
+            query = city + ", Japan";
         }
-
-        // 地名の後ろに国名を付与して検索精度を向上。郵便局は必ずJapanを付ける。
-        let query = `${city}, ${countryHint}`;
-        if (city.includes("郵便局")) query = `${city}, Japan`;
 
         return new Promise(r => {
             geocoder.geocode({ address: query }, (res, status) => {
