@@ -7,7 +7,7 @@
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDHM7DZddYSOlafGz4Et_u75D6R2-IH12A&callback=initMap" async defer></script>
     <style>
         :root { --primary: #e60012; --bg: #f0f2f5; --text: #333; }
-        body { font-family: 'Segoe UI', Meiryo, sans-serif; background: var(--bg); margin: 0; padding: 15px; color: var(--text); }
+        body { font-family: 'Segoe UI', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif; background: var(--bg); margin: 0; padding: 15px; color: var(--text); }
         .container { max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
         .panel { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); height: 92vh; display: flex; flex-direction: column; box-sizing: border-box; }
         h1 { font-size: 1.2rem; color: var(--primary); margin: 0 0 15px 0; display: flex; align-items: center; gap: 8px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
@@ -42,15 +42,15 @@
     const PROXY = "https://corsproxy.io/?";
     const AUTH_KEY = "TRACKQL-API-KEY AA6d1TAttqgabHvJkWx5asrw:hpGjoOr1gtcz0PNAgxlyenZBDOqNd7xKNUuOLdXiz3";
     
-    // 場所を持たない、または地図表示が不要なキーワード
+    // マップに表示しないキーワード（場所が特定不能、またはシステム上のステータス）
     const skipKeywords = [
-        "インターネット", "ＩＶＲ", "配達希望受付", "税関保留", "税関から受領", 
-        "税関へ提示", "依頼受付", "変更", "調査中"
+        "インターネット", "ＩＶＲ", "配達希望受付", "税関保留", 
+        "税関から受領", "税関へ提示", "依頼受付", "変更", "調査中"
     ];
 
     function initMap() {
         map = new google.maps.Map(document.getElementById("map"), {
-            zoom: 5, center: { lat: 35.68, lng: 139.76 },
+            zoom: 5, center: { lat: 34.69, lng: 135.50 }, // 初期表示を大阪付近に
             styles: [{ featureType: "poi", stylers: [{ visibility: "off" }] }]
         });
         searchCarriers("");
@@ -80,7 +80,7 @@
     async function startTracking() {
         const carrierId = document.getElementById("carrier-select").value;
         const trackNo = document.getElementById("track-no").value.trim();
-        if (!carrierId || !trackNo) return alert("業者と番号を入力してください");
+        if (!carrierId || !trackNo) return alert("業者と追跡番号を入力してください");
 
         const query = `query($c:ID!,$n:String!){track(carrierId:$c,trackingNumber:$n){events(last:40){edges{node{time description status{name}}}}}}`;
         try {
@@ -93,7 +93,7 @@
             if (result.data?.track) {
                 renderRoute(result.data.track.events.edges, carrierId);
             } else {
-                alert("データが見つかりませんでした");
+                alert("追跡データが見つかりませんでした。");
             }
         } catch (e) { console.error(e); }
     }
@@ -113,23 +113,25 @@
             const status = node.status.name;
             const fullDesc = (node.description || "").trim();
             
-            // 1. 時刻の処理 (nullの場合は非表示)
+            // 1. 時刻の処理 (nullの場合はリスト上で時刻を非表示にし、マップからも除外)
             const timeStr = node.time ? `<small>${new Date(node.time).toLocaleString('ja-JP')}</small>` : "";
 
             // 2. 地名抽出ロジック
             let cleanCity = "";
             if (fullDesc.includes(" - ")) {
-                // "都島郵便局 - 到着" -> "都島郵便局"
+                // "大阪北郵便局 - 中継" -> "大阪北郵便局"
                 cleanCity = fullDesc.split(" - ")[0].trim();
+            } else if (fullDesc.includes("郵便局")) {
+                // ハイフンがなくても郵便局名が含まれる場合は抽出 (引受など)
+                cleanCity = fullDesc;
             }
 
-            // 国際郵便などのドット付きを除去 (SHIJIAZH.EMS -> SHIJIAZH)
+            // 国際郵便サフィックス除去 (SHIJIAZH.EMS -> SHIJIAZH)
             if (cleanCity) cleanCity = cleanCity.replace(/\.[A-Z0-9]+$/i, "");
 
             // 3. マップ表示判定
-            // - インターネット系キーワードが含まれる場合はスキップ
-            // - descriptionに " - " が含まれない、かつ場所が特定できない場合はスキップ
             const isServiceWord = skipKeywords.some(key => fullDesc.includes(key) || status.includes(key));
+            // timeがnull、または場所名がない、または除外ワードの場合はマップ描画しない
             const shouldSkipMap = isServiceWord || !cleanCity || !node.time;
 
             // 履歴リストに追加
@@ -140,16 +142,16 @@
 
             if (shouldSkipMap) continue;
 
-            // 4. 重複場所の判定 (名前が同じ、または座標が極めて近い場合はスキップ)
-            if (cleanCity.toUpperCase() === lastValidCity.toUpperCase()) continue;
+            // 4. 重複場所の判定 (名前が全く同じ、または前回の座標と極端に近い場合はスキップ)
+            if (cleanCity === lastValidCity) continue;
 
-            // 5. 座標取得と描画
+            // 5. 座標取得
             const coord = await getBestCoord(geocoder, cleanCity, carrierId);
             if (coord) {
-                // 座標ベースでの重複チェック (同じ郵便局内のステータス変化など)
+                // 座標ベースでの重複チェック (同じ建物内でのステータス変化)
                 if (lastValidCoord && 
-                    Math.abs(coord.lat() - lastValidCoord.lat()) < 0.0005 && 
-                    Math.abs(coord.lng() - lastValidCoord.lng()) < 0.0005) {
+                    Math.abs(coord.lat() - lastValidCoord.lat()) < 0.0001 && 
+                    Math.abs(coord.lng() - lastValidCoord.lng()) < 0.0001) {
                     continue;
                 }
 
@@ -184,21 +186,34 @@
     }
 
     async function getBestCoord(geocoder, city, carrierId) {
-        // 郵便局の場合は「郵便局名 + 日本」で検索することで確実にヒットさせる
-        let query = city;
+        let query = "";
+        let isJapan = false;
+
+        // クエリの組み立てと日本判定
         if (city.includes("郵便局")) {
-            query = city + ", 日本";
+            query = city + " 日本"; // "大阪北郵便局 日本" のように指定
+            isJapan = true;
         } else if (/^[A-Z\s]+$/.test(city) || carrierId.includes("cn.")) {
-            // アルファベットのみ、または中国業者の場合は中国ヒント
             query = city + ", China";
         } else {
             query = city + ", Japan";
+            isJapan = true;
         }
 
         return new Promise(r => {
-            geocoder.geocode({ address: query }, (res, status) => {
-                if (status === "OK") r(res[0].geometry.location);
-                else r(null);
+            // componentRestrictions を使用して、日本国内の結果を最優先させる
+            const request = { address: query };
+            if (isJapan) {
+                request.componentRestrictions = { country: 'JP' };
+            }
+
+            geocoder.geocode(request, (res, status) => {
+                if (status === "OK") {
+                    r(res[0].geometry.location);
+                } else {
+                    console.warn("Geocode failed for:", query);
+                    r(null);
+                }
             });
         });
     }
