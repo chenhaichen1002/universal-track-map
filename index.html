@@ -3,21 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hybrid Logistics Tracker</title>
+    <title>Logistics Visualizer - Hybrid Search Engine</title>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDHM7DZddYSOlafGz4Et_u75D6R2-IH12A&callback=initMap" async defer></script>
     <style>
         :root { --primary: #e60012; --bg: #f0f2f5; --text: #333; }
-        body { font-family: 'Segoe UI', Meiryo, sans-serif; background: var(--bg); margin: 0; padding: 15px; }
+        body { font-family: 'Segoe UI', Meiryo, sans-serif; background: var(--bg); margin: 0; padding: 15px; color: var(--text); }
         .container { max-width: 1400px; margin: 0 auto; display: grid; grid-template-columns: 380px 1fr; gap: 20px; }
         .panel { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); height: 92vh; display: flex; flex-direction: column; box-sizing: border-box; }
         h1 { font-size: 1.2rem; color: var(--primary); margin: 0 0 15px 0; border-bottom: 2px solid #eee; padding-bottom: 10px; }
         input, select, button { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; margin-bottom: 10px; }
         button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; }
         #map { height: 92vh; border-radius: 15px; background: #ddd; }
-        .history-list { flex-grow: 1; overflow-y: auto; border-top: 1px solid #eee; padding-top: 10px; }
-        .status-item { padding: 10px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; border-left: 4px solid transparent; }
-        .status-item.valid { border-left-color: #4CAF50; }
-        .status-item.skipped { color: #bbb; opacity: 0.6; }
+        .history-list { flex-grow: 1; overflow-y: auto; margin-top: 10px; border-top: 1px solid #eee; }
+        .status-item { padding: 12px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; }
+        .status-item.skipped { color: #bbb; background: #fafafa; opacity: 0.7; }
         .status-item b { color: var(--primary); }
     </style>
 </head>
@@ -25,11 +24,11 @@
 
 <div class="container">
     <div class="panel">
-        <h1>📦 Hybrid Tracker</h1>
-        <input type="text" id="carrier-query" placeholder="業者名（日本郵便, ヤマト...）" oninput="searchCarriers(this.value)">
+        <h1>📦 Logistics Visualizer</h1>
+        <input type="text" id="carrier-query" placeholder="業者検索..." oninput="searchCarriers(this.value)">
         <select id="carrier-select" size="5"></select>
         <input type="text" id="track-no" placeholder="追跡番号を入力">
-        <button onclick="startTracking()">追跡開始</button>
+        <button onclick="startTracking()">ルートを描画</button>
         <div class="history-list" id="history-list"></div>
     </div>
     <div id="map"></div>
@@ -40,6 +39,8 @@
     const API_URL = "https://apis.tracker.delivery/graphql";
     const PROXY = "https://corsproxy.io/?";
     const AUTH_KEY = "TRACKQL-API-KEY AA6d1TAttqgabHvJkWx5asrw:hpGjoOr1gtcz0PNAgxlyenZBDOqNd7xKNUuOLdXiz3";
+    
+    const skipKeywords = ["インターネット", "ＩＶＲ", "配達希望受付", "税関保留", "税関から受領", "税関へ提示", "依頼受付", "変更", "調査中"];
 
     function initMap() {
         geocoder = new google.maps.Geocoder();
@@ -49,50 +50,61 @@
         searchCarriers("");
     }
 
-    // 1. 日本郵便の公式サイトから正しい住所を補完する（成功時のみ結合ロジック）
-    async function fetchJPPostAddress(name) {
-        if (!name.includes("郵便局")) return null;
-        const targetUrl = `https://www.post.japanpost.jp/cgi-shiten_search/shiten.php?name=${encodeURIComponent(name)}`;
-        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
-        try {
-            const response = await fetch(proxyUrl);
-            const json = await response.json();
-            const doc = new DOMParser().parseFromString(json.contents, 'text/html');
-            // 最初の検索結果の住所を取得
-            const address = doc.querySelector('table.data.full tbody tr td:nth-child(2) small')?.textContent.trim();
-            return address || null;
-        } catch (e) { return null; }
-    }
-
     async function searchCarriers(text) {
-        const query = `query($t:String){carriers(searchText:$t,first:10){edges{node{id name}}}}`;
+        const query = text 
+            ? `query($t:String!){carriers(searchText:$t,first:15){edges{node{id name}}}}`
+            : `query{carriers(countryCode:"JP",first:15){edges{node{id name}}}}`;
         try {
             const res = await fetch(PROXY + encodeURIComponent(API_URL), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': AUTH_KEY },
-                body: JSON.stringify({ query, variables: { t: text || "JP" } })
+                body: JSON.stringify({ query, variables: text ? {t:text} : {} })
             });
             const data = await res.json();
             const select = document.getElementById("carrier-select");
             select.innerHTML = "";
-            data.data.carriers.edges.forEach(e => select.add(new Option(e.node.name, e.node.id)));
-            if (select.options.length > 0) select.selectedIndex = 0;
+            data.data.carriers.edges.forEach(e => {
+                const opt = new Option(e.node.name, e.node.id);
+                select.add(opt);
+            });
+            if (!text) select.selectedIndex = 0;
         } catch (e) { console.error(e); }
     }
 
     async function startTracking() {
         const carrierId = document.getElementById("carrier-select").value;
         const trackNo = document.getElementById("track-no").value.trim();
-        if (!carrierId || !trackNo) return;
+        if (!carrierId || !trackNo) return alert("情報を入力してください");
 
         const query = `query($c:ID!,$n:String!){track(carrierId:$c,trackingNumber:$n){events(last:40){edges{node{time description status{name}}}}}}`;
-        const res = await fetch(PROXY + encodeURIComponent(API_URL), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': AUTH_KEY },
-            body: JSON.stringify({ query, variables: { c: carrierId, n: trackNo } })
-        });
-        const result = await res.json();
-        if (result.data?.track) renderRoute(result.data.track.events.edges, carrierId);
+        try {
+            const res = await fetch(PROXY + encodeURIComponent(API_URL), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': AUTH_KEY },
+                body: JSON.stringify({ query, variables: { c: carrierId, n: trackNo } })
+            });
+            const result = await res.json();
+            if (result.data?.track) {
+                renderRoute(result.data.track.events.edges, carrierId);
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    // 日本郵便のサイトから直接住所を取得する関数 (統合)
+    async function getAddressFromJapanPost(keyword) {
+        const targetUrl = `https://www.post.japanpost.jp/cgi-shiten_search/shiten.php?name=${encodeURIComponent(keyword)}`;
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+        try {
+            const response = await fetch(proxyUrl);
+            const json = await response.json();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(json.contents, 'text/html');
+            // 最初に見つかったテーブル行の住所を取得
+            const address = doc.querySelector('table.data.full tbody tr td:nth-child(2) small')?.textContent.trim();
+            return address || null;
+        } catch (e) {
+            return null;
+        }
     }
 
     async function renderRoute(edges, carrierId) {
@@ -100,50 +112,55 @@
         const historyList = document.getElementById("history-list");
         historyList.innerHTML = "";
         const pathCoords = [];
+        let lastValidPlace = "";
 
         for (const edge of edges) {
             const node = edge.node;
+            const status = node.status.name;
             const fullDesc = (node.description || "").trim();
-            const timeStr = node.time ? new Date(node.time).toLocaleString('ja-JP') : null;
-            
-            // 地名抽出
-            let searchTarget = fullDesc.split(" - ")[0].trim().replace(/\.[A-Z0-9]+$/i, "");
-            const isServiceEvent = !node.time || ["依頼受付", "変更"].some(k => fullDesc.includes(k));
+            const timeDisplay = node.time ? `<small>${new Date(node.time).toLocaleString('ja-JP')}</small>` : "";
+
+            // 場所の特定
+            let placeName = "";
+            if (fullDesc.includes(" - ")) placeName = fullDesc.split(" - ")[0].trim();
+            else if (fullDesc.includes("郵便局")) placeName = fullDesc;
+            if (placeName) placeName = placeName.replace(/\.[A-Z0-9]+$/i, "");
+
+            const isService = skipKeywords.some(key => fullDesc.includes(key));
+            const shouldSkipMap = isService || !placeName || !node.time;
 
             const item = document.createElement("div");
-            item.className = `status-item ${isServiceEvent ? 'skipped' : 'valid'}`;
-            item.innerHTML = `<b>${node.status.name}</b><br><small>${timeStr || '時刻情報なし'}</small><br>${fullDesc}`;
+            item.className = `status-item ${shouldSkipMap ? 'skipped' : ''}`;
+            item.innerHTML = `<b>${status}</b><br>${timeDisplay}<br>${fullDesc}`;
             historyList.appendChild(item);
 
-            if (isServiceEvent || !searchTarget) continue;
+            if (shouldSkipMap || placeName === lastValidPlace) continue;
 
-            // 検索実行
+            // ハイブリッド検索ロジック
             let coord = null;
-            
-            // A. 日本郵便の場合：公式サイトから住所補完を試みる
-            if (carrierId.includes("jp.post")) {
-                const officialAddress = await fetchJPPostAddress(searchTarget);
-                coord = await getCoord(officialAddress || searchTarget, 'jp');
-            } 
-            // B. 海外業者の場合（英字のみ、または中国系IDなど）
-            else if (/^[A-Z\s,]+$/.test(searchTarget) || carrierId.startsWith("cn.")) {
-                coord = await getCoord(searchTarget + (searchTarget.includes(",") ? "" : ", China"), 'cn');
-            }
-            // C. その他国内（ヤマト等）
-            else {
-                coord = await getCoord(searchTarget, 'jp');
+            if (carrierId === "jp.post" && placeName.includes("郵便局")) {
+                // 1. 国内郵便局の場合: 日本郵便公式サイトから住所を取得
+                const officialAddress = await getAddressFromJapanPost(placeName);
+                coord = await geocodeAddress(officialAddress || placeName, 'jp');
+            } else if (/^[A-Z\s]+$/.test(placeName) || carrierId.includes("cn.")) {
+                // 2. 海外の場合: 中国等の国名を補完
+                coord = await geocodeAddress(placeName + ", China", 'cn');
+            } else {
+                // 3. その他（ヤマト等）: 日本優先でGoogle検索
+                coord = await geocodeAddress(placeName, 'jp');
             }
 
             if (coord) {
                 pathCoords.push(coord);
+                lastValidPlace = placeName;
                 markers.push(new google.maps.Marker({
-                    position: coord, map: map, 
+                    position: coord, map: map,
                     label: { text: pathCoords.length.toString(), color: "white" }
                 }));
             }
         }
 
-        if (pathCoords.length > 0) {
+        if (pathCoords.length > 1) {
             polyline = new google.maps.Polyline({ path: pathCoords, strokeColor: "#e60012", map: map });
             const bounds = new google.maps.LatLngBounds();
             pathCoords.forEach(c => bounds.extend(c));
@@ -151,7 +168,7 @@
         }
     }
 
-    function getCoord(address, region) {
+    function geocodeAddress(address, region) {
         return new Promise(r => {
             geocoder.geocode({ address, region }, (res, status) => {
                 r(status === "OK" ? res[0].geometry.location : null);
