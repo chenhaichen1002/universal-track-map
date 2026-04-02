@@ -42,8 +42,12 @@
     const PROXY = "https://corsproxy.io/?";
     const AUTH_KEY = "TRACKQL-API-KEY AA6d1TAttqgabHvJkWx5asrw:hpGjoOr1gtcz0PNAgxlyenZBDOqNd7xKNUuOLdXiz3";
     
-    // マップに表示しないキーワード
-    const skipKeywords = ["インターネット", "ＩＶＲ", "配達希望受付", "税関保留", "依頼受付", "変更"];
+    // マップに表示しないキーワード（地名を含まない純粋なステータス）
+    const skipKeywords = [
+        "税関保留", "税関から受領", "税関へ提示", "税関検査", 
+        "引受", "インターネット", "ＩＶＲ", "配達希望受付", 
+        "依頼受付", "変更", "調査中", "受領", "保留"
+    ];
 
     function initMap() {
         map = new google.maps.Map(document.getElementById("map"), {
@@ -90,7 +94,7 @@
             if (result.data?.track) {
                 renderRoute(result.data.track.events.edges, carrierId);
             } else {
-                alert("データが見つかりません");
+                alert("データが見つかりませんでした");
             }
         } catch (e) { console.error(e); }
     }
@@ -109,26 +113,31 @@
             const status = node.status.name;
             const fullDesc = (node.description || "").trim();
             
-            // --- 1. 時刻表示の制御 (nullチェック) ---
+            // 1. 時刻表示（nullの場合は空文字）
             const timeStr = node.time ? `<small>${new Date(node.time).toLocaleString('ja-JP')}</small>` : "";
 
-            // --- 2. 地名抽出・クレンジング ---
+            // 2. 地名抽出
             let cleanCity = "";
             if (fullDesc.includes(" - ")) {
+                // "都島郵便局 - 到着" -> "都島郵便局"
                 cleanCity = fullDesc.split(" - ")[0].trim();
             } else {
-                cleanCity = fullDesc;
+                // ハイフンがない場合、それがステータス名のみでないかチェック
+                const isOnlyStatus = skipKeywords.some(key => fullDesc === key);
+                if (!isOnlyStatus) {
+                    cleanCity = fullDesc;
+                }
             }
 
-            // 国際郵便サフィックス削除 (SHIJIAZH.EMS -> SHIJIAZH)
+            // 国際郵便サフィックス削除 (.EMS, .CP, .CNなど)
             cleanCity = cleanCity.replace(/\.[A-Z0-9]+$/i, "");
 
-            // --- 3. スキップ判定 ---
-            // キーワードに該当するか、地名がない、または時刻がないイベントはマップから除外
-            const isIgnoredKeyword = skipKeywords.some(key => fullDesc.includes(key) || status.includes(key));
-            const shouldSkipMap = isIgnoredKeyword || !cleanCity || cleanCity === "インターネット・ＩＶＲ";
+            // 3. マップ表示スキップ判定
+            const isForbiddenWord = skipKeywords.some(key => fullDesc.includes(key) || status.includes(key));
+            // 場所が特定できない、または除外ワードに該当する場合はマップ描画しない
+            const shouldSkipMap = isForbiddenWord || !cleanCity || cleanCity === "インターネット・ＩＶＲ";
 
-            // 履歴リストに追加
+            // 履歴リストに追加（スキップ対象は色を薄くする）
             const item = document.createElement("div");
             item.className = `status-item ${shouldSkipMap ? 'skipped' : ''}`;
             item.innerHTML = `<b>${status}</b><br>${timeStr}<br>${fullDesc}`;
@@ -136,11 +145,10 @@
 
             if (shouldSkipMap) continue;
 
-            // --- 4. 重複場所の判定 ---
-            // 前回の有効な地名と同じなら、リストには出すがマップ上には新しいピンを打たない
+            // 4. 重複場所の判定（同じ場所ならピンを立てない）
             if (cleanCity.toUpperCase() === lastValidCity.toUpperCase()) continue;
 
-            // --- 5. 座標取得 ---
+            // 5. 座標取得
             const coord = await getBestCoord(geocoder, cleanCity, carrierId, fullDesc);
             if (coord) {
                 pathCoords.push(coord);
@@ -156,7 +164,7 @@
             }
         }
 
-        // --- 6. ルート線の描画 ---
+        // 6. ルート線の描画
         if (pathCoords.length > 1) {
             polyline = new google.maps.Polyline({
                 path: pathCoords,
@@ -180,7 +188,7 @@
             countryHint = "China";
         }
 
-        // 「地名, 国名」で検索。郵便局が含まれる場合は必ずJapanを付与して精度を100%に近づける
+        // 地名の後ろに国名を付与して検索精度を向上。郵便局は必ずJapanを付ける。
         let query = `${city}, ${countryHint}`;
         if (city.includes("郵便局")) query = `${city}, Japan`;
 
