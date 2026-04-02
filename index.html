@@ -42,15 +42,15 @@
     const PROXY = "https://corsproxy.io/?";
     const AUTH_KEY = "TRACKQL-API-KEY AA6d1TAttqgabHvJkWx5asrw:hpGjoOr1gtcz0PNAgxlyenZBDOqNd7xKNUuOLdXiz3";
     
-    // マップに表示しないキーワード（場所が特定不能、またはシステム上のステータス）
+    // マップに表示しないキーワード
     const skipKeywords = [
         "インターネット", "ＩＶＲ", "配達希望受付", "税関保留", 
-        "税関から受領", "税関へ提示", "依頼受付", "変更", "調査中"
+        "税関から受領", "税関へ提示", "依頼受付", "変更", "調査中", "転送"
     ];
 
     function initMap() {
         map = new google.maps.Map(document.getElementById("map"), {
-            zoom: 5, center: { lat: 34.69, lng: 135.50 }, // 初期表示を大阪付近に
+            zoom: 5, center: { lat: 35.68, lng: 139.76 },
             styles: [{ featureType: "poi", stylers: [{ visibility: "off" }] }]
         });
         searchCarriers("");
@@ -80,7 +80,7 @@
     async function startTracking() {
         const carrierId = document.getElementById("carrier-select").value;
         const trackNo = document.getElementById("track-no").value.trim();
-        if (!carrierId || !trackNo) return alert("業者と追跡番号を入力してください");
+        if (!carrierId || !trackNo) return alert("情報を入力してください");
 
         const query = `query($c:ID!,$n:String!){track(carrierId:$c,trackingNumber:$n){events(last:40){edges{node{time description status{name}}}}}}`;
         try {
@@ -93,7 +93,7 @@
             if (result.data?.track) {
                 renderRoute(result.data.track.events.edges, carrierId);
             } else {
-                alert("追跡データが見つかりませんでした。");
+                alert("追跡データが見つかりませんでした");
             }
         } catch (e) { console.error(e); }
     }
@@ -113,25 +113,24 @@
             const status = node.status.name;
             const fullDesc = (node.description || "").trim();
             
-            // 1. 時刻の処理 (nullの場合はリスト上で時刻を非表示にし、マップからも除外)
+            // 1. 時刻の処理 (nullの場合はリスト上で何も表示しない)
             const timeStr = node.time ? `<small>${new Date(node.time).toLocaleString('ja-JP')}</small>` : "";
 
-            // 2. 地名抽出ロジック
+            // 2. 地名抽出 (データから強制的に取得)
             let cleanCity = "";
             if (fullDesc.includes(" - ")) {
                 // "大阪北郵便局 - 中継" -> "大阪北郵便局"
                 cleanCity = fullDesc.split(" - ")[0].trim();
             } else if (fullDesc.includes("郵便局")) {
-                // ハイフンがなくても郵便局名が含まれる場合は抽出 (引受など)
                 cleanCity = fullDesc;
             }
 
-            // 国際郵便サフィックス除去 (SHIJIAZH.EMS -> SHIJIAZH)
+            // 国際郵便サフィックス除去 (.EMSなどを消して地名だけにする)
             if (cleanCity) cleanCity = cleanCity.replace(/\.[A-Z0-9]+$/i, "");
 
             // 3. マップ表示判定
             const isServiceWord = skipKeywords.some(key => fullDesc.includes(key) || status.includes(key));
-            // timeがnull、または場所名がない、または除外ワードの場合はマップ描画しない
+            // 場所名がない、または時刻がnull、除外ワードに該当する場合はマップから除外
             const shouldSkipMap = isServiceWord || !cleanCity || !node.time;
 
             // 履歴リストに追加
@@ -142,13 +141,13 @@
 
             if (shouldSkipMap) continue;
 
-            // 4. 重複場所の判定 (名前が全く同じ、または前回の座標と極端に近い場合はスキップ)
+            // 4. 名前ベースの重複チェック (同じ場所なら検索しない)
             if (cleanCity === lastValidCity) continue;
 
             // 5. 座標取得
             const coord = await getBestCoord(geocoder, cleanCity, carrierId);
             if (coord) {
-                // 座標ベースでの重複チェック (同じ建物内でのステータス変化)
+                // 座標ベースでの微細な重複チェック
                 if (lastValidCoord && 
                     Math.abs(coord.lat() - lastValidCoord.lat()) < 0.0001 && 
                     Math.abs(coord.lng() - lastValidCoord.lng()) < 0.0001) {
@@ -186,32 +185,24 @@
     }
 
     async function getBestCoord(geocoder, city, carrierId) {
-        let query = "";
-        let isJapan = false;
+        // 日本語が含まれるか、"郵便局"が含まれる場合は日本として検索
+        const isJapan = city.includes("郵便局") || /[\u3040-\u30ff\u4e00-\u9faf]/.test(city);
+        
+        let request = { address: city };
 
-        // クエリの組み立てと日本判定
-        if (city.includes("郵便局")) {
-            query = city + " 日本"; // "大阪北郵便局 日本" のように指定
-            isJapan = true;
+        if (isJapan) {
+            // 日本国内に限定してフルネームで検索
+            request.componentRestrictions = { country: 'JP' };
         } else if (/^[A-Z\s]+$/.test(city) || carrierId.includes("cn.")) {
-            query = city + ", China";
-        } else {
-            query = city + ", Japan";
-            isJapan = true;
+            // 海外（特に中国）の場合は国名を補完
+            request.address = city + ", China";
         }
 
         return new Promise(r => {
-            // componentRestrictions を使用して、日本国内の結果を最優先させる
-            const request = { address: query };
-            if (isJapan) {
-                request.componentRestrictions = { country: 'JP' };
-            }
-
             geocoder.geocode(request, (res, status) => {
                 if (status === "OK") {
                     r(res[0].geometry.location);
                 } else {
-                    console.warn("Geocode failed for:", query);
                     r(null);
                 }
             });
