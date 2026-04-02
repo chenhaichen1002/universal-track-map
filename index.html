@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Logistics Visualizer - Fixed Edition</title>
+    <title>Logistics Visualizer - Route Fix</title>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDHM7DZddYSOlafGz4Et_u75D6R2-IH12A&callback=initMap" async defer></script>
     <style>
         :root { --primary: #e60012; --bg: #f0f2f5; --text: #333; }
@@ -59,7 +59,6 @@
 
         .status-item { padding: 10px; border-bottom: 1px solid #f0f0f0; font-size: 0.8rem; line-height: 1.4; }
         .status-item.skipped { color: #bbb; background: #fafafa; opacity: 0.7; }
-        .status-item b { color: var(--primary); }
 
         @media (max-width: 900px) {
             .container { 
@@ -67,8 +66,8 @@
                 grid-template-rows: auto 400px; 
                 height: auto;
             }
-            .panel { height: auto; max-height: 500px; }
-            #map { height: 400px; }
+            .panel { height: auto; max-height: 450px; }
+            #map { height: 450px; }
         }
     </style>
 </head>
@@ -93,26 +92,26 @@
     const AUTH_KEY = "TRACKQL-API-KEY AA6d1TAttqgabHvJkWx5asrw:hpGjoOr1gtcz0PNAgxlyenZBDOqNd7xKNUuOLdXiz3";
     const GOOGLE_API_KEY = "AIzaSyDHM7DZddYSOlafGz4Et_u75D6R2-IH12A";
 
-    // 除外キーワード定義（これが無いとエラーになります）
     const skipKeywords = ["インターネット", "ＩＶＲ", "配達希望受付", "依頼受付", "変更", "調査中", "受領", "保留"];
 
     function initMap() {
         map = new google.maps.Map(document.getElementById("map"), {
             zoom: 5, 
             center: { lat: 35.68, lng: 139.76 },
-            fullscreenControl: false
+            mapTypeControl: false,
+            streetViewControl: false
         });
         searchCarriers("");
     }
 
     async function fetchPlaceData(query, carrierId) {
         const url = "https://places.googleapis.com/v1/places:searchText";
-        let optimizedQuery = query;
+        let optQuery = query;
         const isJPPost = carrierId === "jp.post" || query.includes("郵便局");
-        if (isJPPost && !optimizedQuery.includes("郵便局")) optimizedQuery += "郵便局";
+        if (isJPPost && !optQuery.includes("郵便局")) optQuery += "郵便局";
 
         const requestBody = {
-            textQuery: optimizedQuery,
+            textQuery: optQuery,
             languageCode: "ja",
             maxResultCount: 1,
             strictTypeFiltering: true
@@ -138,7 +137,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Goog-Api-Key': GOOGLE_API_KEY,
-                    'X-Goog-FieldMask': 'places.location,places.displayName,places.formattedAddress'
+                    'X-Goog-FieldMask': 'places.location'
                 },
                 body: JSON.stringify(requestBody)
             });
@@ -199,7 +198,6 @@
             const node = edge.node;
             const status = node.status.name;
             const desc = (node.description || "").trim();
-            // timeStrの作成
             const timeStr = node.time ? `${new Date(node.time).toLocaleString('ja-JP')}` : "";
 
             let placeName = "";
@@ -220,30 +218,38 @@
             if (coord) {
                 const coordKey = `${coord.lat.toFixed(4)},${coord.lng.toFixed(4)}`;
                 if (coordKey === lastCoordKey) continue; 
-
+                
                 pathCoords.push(coord);
                 lastCoordKey = coordKey;
 
-                // 場所の点（マーカー）を追加
-                markers.push(new google.maps.Marker({
+                // 地点の点（マーカー）を表示
+                const marker = new google.maps.Marker({
                     position: coord,
                     map: map,
                     label: { text: pathCoords.length.toString(), color: "white", fontWeight: "bold" }
-                }));
+                });
+                markers.push(marker);
             }
         }
 
+        // ルートの線（赤い線）を表示
         if (pathCoords.length > 1) {
-            polyline = new google.maps.Polyline({ 
-                path: pathCoords, 
-                strokeColor: "#e60012", 
-                strokeWeight: 4, 
-                strokeOpacity: 0.8, 
-                map: map 
+            polyline = new google.maps.Polyline({
+                path: pathCoords,
+                strokeColor: "#e60012",
+                strokeOpacity: 0.8,
+                strokeWeight: 4,
+                geodesic: true,
+                map: map
             });
+
+            // 全てのピンが画面に収まるように調整
             const bounds = new google.maps.LatLngBounds();
             pathCoords.forEach(c => bounds.extend(c));
             map.fitBounds(bounds);
+        } else if (pathCoords.length === 1) {
+            map.setCenter(pathCoords[0]);
+            map.setZoom(12);
         }
     }
 
@@ -255,3 +261,4 @@
 </script>
 </body>
 </html>
+
