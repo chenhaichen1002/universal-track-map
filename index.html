@@ -17,7 +17,7 @@
         #map { height: 92vh; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); background: #ddd; }
         .history-list { flex-grow: 1; overflow-y: auto; margin-top: 10px; border-top: 1px solid #eee; }
         .status-item { padding: 12px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; line-height: 1.4; transition: 0.2s; }
-        .status-item.no-map { color: #888; background: #fafafa; opacity: 0.8; } /* 地図に載らない行のスタイル */
+        .status-item.no-map { color: #888; background: #fafafa; border-left: 4px solid #ddd; }
         .status-item b { color: var(--primary); }
         @media (max-width: 900px) { .container { grid-template-columns: 1fr; } #map, .panel { height: auto; min-height: 400px; } }
     </style>
@@ -93,48 +93,41 @@
         const historyList = document.getElementById("history-list");
         historyList.innerHTML = "";
         const pathCoords = [];
-        let lastValidCity = "";
+        let lastValidLocationName = "";
 
         for (const edge of edges) {
             const node = edge.node;
             const status = node.status.name;
             const fullDesc = (node.description || "").trim();
-            const timeDisplay = node.time ? `<small>${new Date(node.time).toLocaleString('ja-JP')}</small>` : "";
+            const timeDisplay = node.time ? `<small>${new Date(node.time).toLocaleString('ja-JP')}</small>` : "時刻未定";
 
-            // 1. 場所の抽出 (ハイフンの前を最後まで読み込み)
+            // 1. 場所の抽出
             let searchCity = fullDesc.includes(" - ") ? fullDesc.split(" - ")[0].trim() : fullDesc;
-
-            // 2. 清掃：スペース以降をカット (SHENZHEN Y -> SHENZHEN)
-            if (searchCity.includes(" ")) {
-                searchCity = searchCity.split(" ")[0].trim();
-            }
-
-            // 3. 配送記号サフィックスの消去 (.EMS, EMS, .SAL 等)
+            if (searchCity.includes(" ")) searchCity = searchCity.split(" ")[0].trim();
             searchCity = searchCity.replace(/(\.?[A-Z]{3,})$/i, "").trim();
 
-            // 4. 地図判定ロジック
-            const skipKeywords = ["中継", "保留", "受付", "税関", "調査中", "不在", "変更", "希望"];
-            
-            // 地名らしい（局・分室等）か、単独の地名（SHENZHEN等）か
-            const isPureStatus = skipKeywords.some(word => searchCity === word);
+            // 2. 地図に載せないキーワード判定
+            const skipKeywords = ["インターネット", "ＩＶＲ", "希望", "税関", "保留", "受付", "調査中", "不在", "変更", "持ち戻り"];
+            const isInvalidLocation = skipKeywords.some(word => searchCity.includes(word));
             const hasLocationKeyword = ["局", "店", "分室", "INT", "CENTER", "POST"].some(k => searchCity.toUpperCase().includes(k));
             
-            // 地名として有効かどうかのフラグ
-            const isRealLocation = !isPureStatus && (hasLocationKeyword || !skipKeywords.some(word => searchCity.includes(word)));
+            // 地図にピンを立てるかどうかの最終判定
+            const canShowOnMap = !isInvalidLocation && (hasLocationKeyword || (searchCity.length > 2 && !skipKeywords.some(word => searchCity === word)));
 
-            // 5. 履歴リストへ追加 (全てのイベントを表示)
+            // 3. 履歴リストへ追加 (全てのイベントを表示するが、地図対象外はグレーアウト)
             const item = document.createElement("div");
-            item.className = `status-item ${!isRealLocation ? 'no-map' : ''}`;
+            item.className = `status-item ${!canShowOnMap ? 'no-map' : ''}`;
             item.innerHTML = `<b>${status}</b><br>${timeDisplay}<br>${fullDesc}`;
             historyList.appendChild(item);
 
-            // 6. 地図処理 (有効な場所があり、かつ前回と異なる場所のみピンを立てる)
-            if (!isRealLocation || !searchCity || searchCity === lastValidCity) continue;
+            // 4. 重複と地図描画の処理
+            // 同じ場所(例: 東京国際郵便局)が連続する場合、地図には1つだけ採用する
+            if (!canShowOnMap || searchCity === lastValidLocationName) continue;
 
             const coord = await getBestCoordWithPlaces(searchCity);
             if (coord) {
                 pathCoords.push(coord);
-                lastValidCity = searchCity;
+                lastValidLocationName = searchCity; // 最後に地図に採用した地名を保存
                 
                 const marker = new google.maps.Marker({
                     position: coord,
@@ -146,7 +139,7 @@
             }
         }
 
-        // 7. ルート線の描画
+        // 5. 線の描画
         if (pathCoords.length > 1) {
             polyline = new google.maps.Polyline({
                 path: pathCoords, geodesic: true, strokeColor: "#e60012",
@@ -161,17 +154,14 @@
     async function getBestCoordWithPlaces(address) {
         return new Promise(r => {
             const request = {
-                query: `"${address}"`, // ダブルクォーテーションで完全一致を狙う
+                query: `"${address}"`,
                 fields: ['geometry'],
                 locationBias: { lat: 35.68, lng: 139.76 }
             };
-
             placesService.findPlaceFromQuery(request, (results, status) => {
                 if (status === google.maps.places.PlacesServiceStatus.OK && results) {
                     r(results[0].geometry.location);
-                } else {
-                    r(null);
-                }
+                } else { r(null); }
             });
         });
     }
