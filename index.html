@@ -101,33 +101,45 @@
             const fullDesc = (node.description || "").trim();
             const timeDisplay = node.time ? `<small>${new Date(node.time).toLocaleString('ja-JP')}</small>` : "時刻未定";
 
-            // 1. 場所の抽出
+            // 1. ハイフンの前を取得 (YANTAI EMS - 国際交換局に到着 -> YANTAI EMS)
             let searchCity = fullDesc.includes(" - ") ? fullDesc.split(" - ")[0].trim() : fullDesc;
-            if (searchCity.includes(" ")) searchCity = searchCity.split(" ")[0].trim();
-            searchCity = searchCity.replace(/(\.?[A-Z]{3,})$/i, "").trim();
 
-            // 2. 地図に載せないキーワード判定
+            // 2. 清掃：まず .EMS や EMS (単独) を消去する
+            searchCity = searchCity.replace(/\.?EMS$/i, "").replace(/\.?SAL$/i, "").trim();
+
+            // 3. 清掃：残った文字列にスペースがあれば、最初のスペース以降をカット (SHENZHEN Y -> SHENZHEN)
+            if (searchCity.includes(" ")) {
+                searchCity = searchCity.split(" ")[0].trim();
+            }
+
+            // 4. 地図判定ロジック
             const skipKeywords = ["インターネット", "ＩＶＲ", "希望", "税関", "保留", "受付", "調査中", "不在", "変更", "持ち戻り"];
-            const isInvalidLocation = skipKeywords.some(word => searchCity.includes(word));
-            const hasLocationKeyword = ["局", "店", "分室", "INT", "CENTER", "POST"].some(k => searchCity.toUpperCase().includes(k));
             
-            // 地図にピンを立てるかどうかの最終判定
-            const canShowOnMap = !isInvalidLocation && (hasLocationKeyword || (searchCity.length > 2 && !skipKeywords.some(word => searchCity === word)));
+            // 禁止ワードそのものかどうかの判定
+            const isJustStatusWord = skipKeywords.some(word => searchCity === word);
+            
+            // 地名らしいキーワードの有無
+            const hasLocationKeyword = ["局", "店", "分室", "INT", "CENTER", "POST", "PORT", "AIRPORT"].some(k => searchCity.toUpperCase().includes(k));
+            
+            // アルファベットのみの場合は地名（YANTAI等）の可能性が高い
+            const isAlphaLocation = /^[A-Z]+$/i.test(searchCity) && searchCity.length >= 3;
 
-            // 3. 履歴リストへ追加 (全てのイベントを表示するが、地図対象外はグレーアウト)
+            // 地図にピンを立てる条件
+            const canShowOnMap = !isJustStatusWord && (hasLocationKeyword || isAlphaLocation || (searchCity.length >= 2 && !skipKeywords.some(word => searchCity.includes(word))));
+
+            // 5. 履歴リストへ追加
             const item = document.createElement("div");
             item.className = `status-item ${!canShowOnMap ? 'no-map' : ''}`;
             item.innerHTML = `<b>${status}</b><br>${timeDisplay}<br>${fullDesc}`;
             historyList.appendChild(item);
 
-            // 4. 重複と地図描画の処理
-            // 同じ場所(例: 東京国際郵便局)が連続する場合、地図には1つだけ採用する
-            if (!canShowOnMap || searchCity === lastValidLocationName) continue;
+            // 6. 地図処理
+            if (!canShowOnMap || !searchCity || searchCity === lastValidLocationName) continue;
 
             const coord = await getBestCoordWithPlaces(searchCity);
             if (coord) {
                 pathCoords.push(coord);
-                lastValidLocationName = searchCity; // 最後に地図に採用した地名を保存
+                lastValidLocationName = searchCity;
                 
                 const marker = new google.maps.Marker({
                     position: coord,
@@ -139,7 +151,6 @@
             }
         }
 
-        // 5. 線の描画
         if (pathCoords.length > 1) {
             polyline = new google.maps.Polyline({
                 path: pathCoords, geodesic: true, strokeColor: "#e60012",
