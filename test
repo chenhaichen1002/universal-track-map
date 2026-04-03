@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Global Tracker Pro - Logistics Visualizer</title>
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDHM7DZddYSOlafGz4Et_u75D6R2-IH12A&callback=initMap" async defer></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDHM7DZddYSOlafGz4Et_u75D6R2-IH12A&callback=initMap&libraries=places" async defer></script>
     <style>
         :root { --primary: #e60012; --bg: #f0f2f5; --text: #333; }
         body { font-family: 'Segoe UI', Meiryo, sans-serif; background: var(--bg); margin: 0; padding: 15px; color: var(--text); }
@@ -37,12 +37,11 @@
 </div>
 
 <script>
-    let map, markers = [], polyline;
+    let map, markers = [], polyline, placesService;
     const API_URL = "https://apis.tracker.delivery/graphql";
     const PROXY = "https://corsproxy.io/?";
     const AUTH_KEY = "TRACKQL-API-KEY AA6d1TAttqgabHvJkWx5asrw:hpGjoOr1gtcz0PNAgxlyenZBDOqNd7xKNUuOLdXiz3";
     
-    // 除外キーワード
     const skipKeywords = ["インターネット", "ＩＶＲ", "配達希望受付", "税関保留", "税関から受領", "税関へ提示", "依頼受付", "変更", "調査中"];
 
     function initMap() {
@@ -50,6 +49,7 @@
             zoom: 5, center: { lat: 35.68, lng: 139.76 },
             styles: [{ featureType: "poi", stylers: [{ visibility: "off" }] }]
         });
+        placesService = new google.maps.places.PlacesService(map);
         searchCarriers("");
     }
 
@@ -100,45 +100,39 @@
         const pathCoords = [];
         let lastValidCity = "";
 
-        const geocoder = new google.maps.Geocoder();
-
         for (const edge of edges) {
             const node = edge.node;
             const status = node.status.name;
             const fullDesc = (node.description || "").trim();
-            
-            // 1. 時刻の処理 (nullの場合は表示しない)
             const timeDisplay = node.time ? `<small>${new Date(node.time).toLocaleString('ja-JP')}</small>` : "";
 
-            // 2. 地名抽出 (ハイフンで分割して、左側をそのまま使う)
+            // --- 100%抽出ロジック（分室・支店対応版） ---
             let searchCity = "";
+            
             if (fullDesc.includes(" - ")) {
+                // ハイフンで分割し、左側を全て取得（例：「新大阪郵便局南港分室 - 中継」→「新大阪郵便局南港分室」）
                 searchCity = fullDesc.split(" - ")[0].trim();
-            } else if (fullDesc.includes("郵便局")) {
+            } else {
+                // ハイフンがない場合は、説明文全体を場所名として扱う
                 searchCity = fullDesc;
             }
 
             // 国際郵便などのサフィックス削除 (.EMS等を消す)
             if (searchCity) searchCity = searchCity.replace(/\.[A-Z0-9]+$/i, "");
 
-            // 3. 表示判定
             const isService = skipKeywords.some(key => fullDesc.includes(key) || status.includes(key));
-            // 時刻がない、または場所がない、または除外ワードの場合はマップに載せない
             const shouldSkipMap = isService || !searchCity || !node.time;
 
-            // 履歴リストの更新
             const item = document.createElement("div");
             item.className = `status-item ${shouldSkipMap ? 'skipped' : ''}`;
             item.innerHTML = `<b>${status}</b><br>${timeDisplay}<br>${fullDesc}`;
             historyList.appendChild(item);
 
             if (shouldSkipMap) continue;
-
-            // 4. 重複チェック
             if (searchCity === lastValidCity) continue;
 
-            // 5. 検索実行
-            const coord = await getBestCoord(geocoder, searchCity, carrierId);
+            // --- Places APIで完全一致検索 ---
+            const coord = await getBestCoordWithPlaces(searchCity);
             if (coord) {
                 pathCoords.push(coord);
                 lastValidCity = searchCity;
@@ -153,15 +147,10 @@
             }
         }
 
-        // 6. ルート線の描画
         if (pathCoords.length > 1) {
             polyline = new google.maps.Polyline({
-                path: pathCoords,
-                geodesic: true,
-                strokeColor: "#e60012",
-                strokeOpacity: 0.7,
-                strokeWeight: 4,
-                map: map
+                path: pathCoords, geodesic: true, strokeColor: "#e60012",
+                strokeOpacity: 0.7, strokeWeight: 4, map: map
             });
             const bounds = new google.maps.LatLngBounds();
             pathCoords.forEach(c => bounds.extend(c));
@@ -169,23 +158,20 @@
         }
     }
 
-    async function getBestCoord(geocoder, address, carrierId) {
-        // 余計な加工はせず、地域だけ指定してGoogleに任せる
-        const request = { 
-            address: address,
-            region: 'jp' // 日本の地名を優先
-        };
-
-        // 国際郵便（アルファベットのみ）の場合は、中国として検索を試みる
-        if (/^[A-Z\s]+$/.test(address) || carrierId.includes("cn.")) {
-            request.address = address + ", China";
-            request.region = 'cn';
-        }
-
+    // Places API (Find Place From Query) を使用した検索
+    async function getBestCoordWithPlaces(address) {
         return new Promise(r => {
-            geocoder.geocode(request, (res, status) => {
-                if (status === "OK") {
-                    r(res[0].geometry.location);
+            // ダブルクォーテーションで囲むことで、Googleの自動補完を抑止し「完全一致」を狙う
+            const request = {
+                query: `"${address}"`,
+                fields: ['geometry', 'name'],
+                locationBias: { lat: 35.68, lng: 139.76 } // 日本国内を優先
+            };
+
+            placesService.findPlaceFromQuery(request, (results, status) => {
+                if (status === google.maps.places.PlacesServiceStatus.OK && results) {
+                    // 最も関連度の高い最初の結果の座標を返す
+                    r(results[0].geometry.location);
                 } else {
                     r(null);
                 }
