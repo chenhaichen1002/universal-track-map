@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Tracker Pro - Logistics Visualizer</title>
+    <title>Logistics Visualizer - Precise Location</title>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDHM7DZddYSOlafGz4Et_u75D6R2-IH12A&callback=initMap&libraries=places" async defer></script>
     <style>
         :root { --primary: #e60012; --bg: #f0f2f5; --text: #333; }
@@ -101,40 +101,41 @@
             const fullDesc = (node.description || "").trim();
             const timeDisplay = node.time ? `<small>${new Date(node.time).toLocaleString('ja-JP')}</small>` : "時刻未定";
 
-            // 1. ハイフンの前を取得 (YANTAI EMS - 国際交換局に到着 -> YANTAI EMS)
+            // 1. 場所の抽出 (ハイフン分割)
             let searchCity = fullDesc.includes(" - ") ? fullDesc.split(" - ")[0].trim() : fullDesc;
 
-            // 2. 清掃：まず .EMS や EMS (単独) を消去する
+            // 2. 清掃：サフィックス除去 (.EMS等)
             searchCity = searchCity.replace(/\.?EMS$/i, "").replace(/\.?SAL$/i, "").trim();
 
-            // 3. 清掃：残った文字列にスペースがあれば、最初のスペース以降をカット (SHENZHEN Y -> SHENZHEN)
+            // 3. 清掃：スペース以降カット
             if (searchCity.includes(" ")) {
                 searchCity = searchCity.split(" ")[0].trim();
             }
 
-            // 4. 地図判定ロジック
-            const skipKeywords = ["インターネット", "ＩＶＲ", "希望", "税関", "保留", "受付", "調査中", "不在", "変更", "持ち戻り"];
+            // 4. 【厳格判定】住所・地名が存在するか？
+            const invalidKeywords = ["引受", "受付", "中継", "保留", "税関", "調査中", "不在", "変更", "希望", "持ち戻り", "インターネット"];
             
-            // 禁止ワードそのものかどうかの判定
-            const isJustStatusWord = skipKeywords.some(word => searchCity === word);
+            // 地名として認めるキーワード（これらが入っていれば住所とみなす）
+            const locationSigns = ["局", "店", "分室", "INT", "CENTER", "POST", "PORT", "市", "区", "町", "村", "都", "道", "府", "県"];
+            const hasLocationSign = locationSigns.some(k => searchCity.includes(k));
             
-            // 地名らしいキーワードの有無
-            const hasLocationKeyword = ["局", "店", "分室", "INT", "CENTER", "POST", "PORT", "AIRPORT"].some(k => searchCity.toUpperCase().includes(k));
-            
-            // アルファベットのみの場合は地名（YANTAI等）の可能性が高い
-            const isAlphaLocation = /^[A-Z]+$/i.test(searchCity) && searchCity.length >= 3;
+            // アルファベット3文字以上（海外地名の可能性）
+            const isAlphaLocation = /^[A-Z]{3,}$/i.test(searchCity);
 
-            // 地図にピンを立てる条件
-            const canShowOnMap = !isJustStatusWord && (hasLocationKeyword || isAlphaLocation || (searchCity.length >= 2 && !skipKeywords.some(word => searchCity.includes(word))));
+            // ステータス名そのものではないこと
+            const isJustStatus = invalidKeywords.some(word => searchCity === word);
 
-            // 5. 履歴リストへ追加
+            // 最終判定：住所が存在すると言えるか？
+            const isRealLocation = !isJustStatus && (hasLocationSign || isAlphaLocation) && searchCity.length >= 2;
+
+            // 5. 履歴リストへ追加 (全てのイベントを表示するが、場所なしはグレー)
             const item = document.createElement("div");
-            item.className = `status-item ${!canShowOnMap ? 'no-map' : ''}`;
+            item.className = `status-item ${!isRealLocation ? 'no-map' : ''}`;
             item.innerHTML = `<b>${status}</b><br>${timeDisplay}<br>${fullDesc}`;
             historyList.appendChild(item);
 
-            // 6. 地図処理
-            if (!canShowOnMap || !searchCity || searchCity === lastValidLocationName) continue;
+            // 6. 地図処理 (有効な住所がある場合のみ)
+            if (!isRealLocation || searchCity === lastValidLocationName) continue;
 
             const coord = await getBestCoordWithPlaces(searchCity);
             if (coord) {
