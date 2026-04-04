@@ -12,13 +12,14 @@
         .panel { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); height: 92vh; display: flex; flex-direction: column; box-sizing: border-box; }
         h1 { font-size: 1.2rem; color: var(--primary); margin: 0 0 15px 0; border-bottom: 2px solid #eee; padding-bottom: 10px; }
         input, select, button { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; margin-bottom: 10px; }
-        button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; }
+        button { background: var(--primary); color: white; border: none; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:hover { opacity: 0.8; }
         #map { height: 92vh; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); background: #ddd; }
         .history-list { flex-grow: 1; overflow-y: auto; margin-top: 10px; border-top: 1px solid #eee; }
         .status-item { padding: 12px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; line-height: 1.4; }
-        .status-item.no-map { color: #888; background: #fafafa; border-left: 4px solid #ddd; }
+        .status-item.no-map { color: #888; background: #fcfcfc; border-left: 4px solid #eee; }
         .status-item b { color: var(--primary); }
-        .time-label { display: block; color: #666; font-size: 0.75rem; margin-bottom: 2px; }
+        .time-label { display: block; color: #666; font-size: 0.75rem; margin-bottom: 3px; font-weight: normal; }
         @media (max-width: 900px) { .container { grid-template-columns: 1fr; } #map, .panel { height: auto; min-height: 400px; } }
     </style>
 </head>
@@ -100,28 +101,39 @@
             const status = node.status.name;
             const fullDesc = (node.description || "").trim();
 
-            // --- 1. 時刻の表示判定 ---
+            // --- 1. 時刻の表示処理 (timeがnullなら何も表示しない) ---
             let timeHtml = "";
             if (node.time) {
-                timeHtml = `<span class="time-label">${new Date(node.time).toLocaleString('ja-JP')}</span>`;
+                const dateObj = new Date(node.time);
+                // フォーマット: 2025/12/20 17:27:00
+                const formattedTime = dateObj.getFullYear() + '/' + 
+                                    ('0' + (dateObj.getMonth() + 1)).slice(-2) + '/' + 
+                                    ('0' + dateObj.getDate()).slice(-2) + ' ' + 
+                                    ('0' + dateObj.getHours()).slice(-2) + ':' + 
+                                    ('0' + dateObj.getMinutes()).slice(-2) + ':' + 
+                                    ('0' + dateObj.getSeconds()).slice(-2);
+                timeHtml = `<span class="time-label">${formattedTime}</span>`;
             }
 
             // --- 2. 場所の抽出と清掃 ---
             let searchCity = fullDesc.includes(" - ") ? fullDesc.split(" - ")[0].trim() : fullDesc;
+            
+            // スペース以降カット (例: "SHENZHEN Y" -> "SHENZHEN")
+            if (searchCity.includes(" ")) searchCity = searchCity.split(" ")[0].trim();
+            
+            // EMSなどのサフィックス除去
             searchCity = searchCity.replace(/\.?EMS$/i, "").replace(/\.?SAL$/i, "").trim();
-            if (searchCity.includes(" ")) {
-                searchCity = searchCity.split(" ")[0].trim();
-            }
 
-            // --- 3. 地図に載せるかどうかの判定ロジック ---
-            const invalidKeywords = ["引受", "受付", "中継", "保留", "税関", "調査中", "不在", "希望", "持ち戻り", "インターネット", "出発"];
+            // --- 3. 地図判定ロジック (場所がない時を検知) ---
+            const skipKeywords = ["引受", "受付", "中継", "保留", "税関", "調査中", "不在", "変更", "希望", "持ち戻り", "インターネット", "出発"];
             const locationSigns = ["局", "店", "分室", "INT", "CENTER", "POST", "市", "区", "町", "村"];
             
             const hasLocationSign = locationSigns.some(k => searchCity.includes(k));
-            const isAlphaLocation = /^[A-Z]{3,}$/i.test(searchCity); // 海外都市名など
-            const isPureStatus = invalidKeywords.some(word => searchCity === word || searchCity.includes(word) && !hasLocationSign);
+            const isAlphaLocation = /^[A-Z]{3,}$/i.test(searchCity); 
+            
+            // 「配達局から出発」のように、キーワードを含んでいて具体的な地名（XX郵便局など）が伴わない場合は場所なしとみなす
+            const isPureStatus = skipKeywords.some(word => searchCity === word || (searchCity.includes(word) && !searchCity.match(/..郵便局|..支店|..分室/)));
 
-            // 「配達局から出発」などの地名がない場合は地図対象外
             const isRealLocation = !isPureStatus && (hasLocationSign || isAlphaLocation) && searchCity.length >= 2;
 
             // --- 4. 履歴リストへ追加 ---
@@ -148,6 +160,7 @@
             }
         }
 
+        // ルート線描画
         if (pathCoords.length > 1) {
             polyline = new google.maps.Polyline({
                 path: pathCoords, geodesic: true, strokeColor: "#e60012",
