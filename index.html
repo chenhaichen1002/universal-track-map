@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Global Tracker Pro - Visualizer</title>
+    <title>Logistics Visualizer Pro</title>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDHM7DZddYSOlafGz4Et_u75D6R2-IH12A&callback=initMap&libraries=places" async defer></script>
     <style>
         :root { --primary: #e60012; --bg: #f0f2f5; --text: #333; }
@@ -17,9 +17,9 @@
         #map { height: 92vh; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); background: #ddd; }
         .history-list { flex-grow: 1; overflow-y: auto; margin-top: 10px; border-top: 1px solid #eee; }
         .status-item { padding: 12px; border-bottom: 1px solid #f0f0f0; font-size: 0.85rem; line-height: 1.4; }
-        .status-item.no-map { color: #888; background: #fcfcfc; border-left: 4px solid #eee; opacity: 0.7; }
+        .status-item.no-map { color: #999; background: #fafafa; border-left: 4px solid #ddd; }
         .status-item b { color: var(--primary); }
-        .time-label { display: block; color: #666; font-size: 0.75rem; margin-bottom: 3px; font-weight: normal; }
+        .time-label { display: block; color: #666; font-size: 0.75rem; margin-bottom: 3px; }
         @media (max-width: 900px) { .container { grid-template-columns: 1fr; } #map, .panel { height: auto; min-height: 400px; } }
     </style>
 </head>
@@ -45,7 +45,7 @@
     
     function initMap() {
         map = new google.maps.Map(document.getElementById("map"), {
-            zoom: 5, center: { lat: 34.6937, lng: 135.5023 }, // 初期位置を日本中心寄りに
+            zoom: 5, center: { lat: 34.6937, lng: 135.5023 },
             styles: [{ featureType: "poi", stylers: [{ visibility: "off" }] }]
         });
         placesService = new google.maps.places.PlacesService(map);
@@ -85,8 +85,6 @@
             const result = await res.json();
             if (result.data?.track) {
                 renderRoute(result.data.track.events.edges);
-            } else {
-                alert("データが見つかりませんでした。");
             }
         } catch (e) { console.error(e); }
     }
@@ -96,65 +94,64 @@
         const historyList = document.getElementById("history-list");
         historyList.innerHTML = "";
         const pathCoords = [];
-        let lastValidLocationName = "";
+        // 既に使用した場所名を記録するセット（重複ピン防止）
+        const usedLocations = new Set();
 
         for (const edge of edges) {
             const node = edge.node;
             const status = node.status.name;
             const fullDesc = (node.description || "").trim();
 
-            // --- 1. 時刻の表示処理 ---
+            // --- 1. 時刻表示の作成 ---
             let timeHtml = "";
             if (node.time) {
-                const dateObj = new Date(node.time);
-                const formattedTime = dateObj.getFullYear() + '/' + 
-                                    ('0' + (dateObj.getMonth() + 1)).slice(-2) + '/' + 
-                                    ('0' + dateObj.getDate()).slice(-2) + ' ' + 
-                                    ('0' + dateObj.getHours()).slice(-2) + ':' + 
-                                    ('0' + dateObj.getMinutes()).slice(-2);
-                timeHtml = `<span class="time-label">${formattedTime}</span>`;
+                const d = new Date(node.time);
+                timeHtml = `<span class="time-label">${d.getFullYear()}/${('0'+(d.getMonth()+1)).slice(-2)}/${('0'+d.getDate()).slice(-2)} ${('0'+d.getHours()).slice(-2)}:${('0'+d.getMinutes()).slice(-2)}</span>`;
             }
 
-            // --- 2. 場所の抽出 (サテライト情報維持) ---
-            // 「 - 」で分割し、左側をすべて場所として採用。右側のステータス（輸送中など）は捨てる。
-            let searchCity = fullDesc.includes(" - ") ? fullDesc.split(" - ")[0].trim() : fullDesc;
-            
-            // --- 3. 地図判定ロジック ---
-            // 状態のみを示すキーワード（これらと完全一致する場合は場所ではないと判断）
-            const pureStatusWords = ["引受", "受付", "中継", "保留", "税関", "調査中", "不在", "変更", "希望", "持ち戻り", "出発", "通過", "輸送中", "配達完了", "お届け先にお届け済み"];
-            // 拠点であることを示すキーワード
-            const locationSigns = ["局", "店", "分室", "ベース", "センター", "営業所", "作業店", "支店", "（", "(", "市", "区", "町", "村", "INT", "CENTER"];
+            // --- 2. 場所の判定とクリーニング ---
+            let searchCity = "";
+            let isRealLocation = false;
 
-            const isPureStatus = pureStatusWords.some(word => searchCity === word);
-            const hasLocationSign = locationSigns.some(k => searchCity.includes(k));
-            const isAlphaLocation = /^[A-Z]{3,}$/i.test(searchCity);
+            // ハイフンで始まる場合や空の場合は「場所なし」
+            if (fullDesc && !fullDesc.startsWith("-")) {
+                searchCity = fullDesc.includes(" - ") ? fullDesc.split(" - ")[0].trim() : fullDesc;
+                
+                // 状態のみの単語リスト
+                const statusOnly = ["引受", "受付", "中継", "保留", "税関", "調査中", "不在", "変更", "希望", "持ち戻り", "出発", "通過", "輸送中", "配達完了"];
+                // 拠点を示すキーワード
+                const locKeys = ["局", "店", "分室", "ベース", "センター", "営業所", "作業店", "支店", "（", "(", "市", "区"];
 
-            // 最終判定：ステータス単語そのものではなく、かつ拠点キーワードを含むか、一定以上の長さがある場合
-            const isRealLocation = !isPureStatus && (hasLocationSign || isAlphaLocation || searchCity.length >= 4);
+                const isStatusWord = statusOnly.some(word => searchCity === word);
+                const hasLocKey = locKeys.some(k => searchCity.includes(k));
+                
+                // 「状態語そのもの」ではなく、かつ「拠点キー」を含む場合に場所とみなす
+                if (!isStatusWord && (hasLocKey || searchCity.length >= 4)) {
+                    isRealLocation = true;
+                }
+            }
 
-            // --- 4. 履歴リストへ追加 ---
+            // --- 3. 履歴リストへ追加 ---
             const item = document.createElement("div");
             item.className = `status-item ${!isRealLocation ? 'no-map' : ''}`;
             item.innerHTML = `<b>${status}</b><br>${timeHtml}${fullDesc}`;
             historyList.appendChild(item);
 
-            // --- 5. 地図処理 ---
-            // 場所として不適格、または前回と同じ場所ならスキップ
-            if (!isRealLocation || searchCity === lastValidLocationName) continue;
-
-            const coord = await getBestCoordWithPlaces(searchCity);
-            if (coord) {
-                pathCoords.push(coord);
-                lastValidLocationName = searchCity;
-                
-                const marker = new google.maps.Marker({
-                    position: coord,
-                    map: map,
-                    label: { text: pathCoords.length.toString(), color: "white", fontWeight: "bold" },
-                    title: searchCity,
-                    zIndex: 999
-                });
-                markers.push(marker);
+            // --- 4. 地図ピン打ち (重複チェック付) ---
+            if (isRealLocation && !usedLocations.has(searchCity)) {
+                const coord = await getBestCoordWithPlaces(searchCity);
+                if (coord) {
+                    pathCoords.push(coord);
+                    usedLocations.add(searchCity); // この場所は記録済みとする
+                    
+                    const marker = new google.maps.Marker({
+                        position: coord,
+                        map: map,
+                        label: { text: pathCoords.length.toString(), color: "white", fontWeight: "bold" },
+                        title: searchCity
+                    });
+                    markers.push(marker);
+                }
             }
         }
 
@@ -167,27 +164,20 @@
             const bounds = new google.maps.LatLngBounds();
             pathCoords.forEach(c => bounds.extend(c));
             map.fitBounds(bounds);
-        } else if (pathCoords.length === 1) {
-            map.setCenter(pathCoords[0]);
-            map.setZoom(12);
         }
     }
 
     async function getBestCoordWithPlaces(address) {
         return new Promise(r => {
-            // 日本国内の営業所特定精度を上げるため、検索クエリを調整
             const request = {
                 query: address, 
                 fields: ['geometry'],
-                locationBias: { lat: 35.68, lng: 139.76 } // 日本を優先
+                locationBias: { lat: 34.69, lng: 135.50 } 
             };
             placesService.findPlaceFromQuery(request, (results, status) => {
                 if (status === google.maps.places.PlacesServiceStatus.OK && results) {
                     r(results[0].geometry.location);
-                } else { 
-                    // ヒットしない場合、少し広い範囲で再試行（フォールバック）
-                    r(null); 
-                }
+                } else { r(null); }
             });
         });
     }
