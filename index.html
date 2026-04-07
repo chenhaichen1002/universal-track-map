@@ -94,7 +94,6 @@
         const historyList = document.getElementById("history-list");
         historyList.innerHTML = "";
         const pathCoords = [];
-        // 既に使用した場所名を記録するセット（重複ピン防止）
         const usedLocations = new Set();
 
         for (const edge of edges) {
@@ -102,47 +101,55 @@
             const status = node.status.name;
             const fullDesc = (node.description || "").trim();
 
-            // --- 1. 時刻表示の作成 ---
             let timeHtml = "";
             if (node.time) {
                 const d = new Date(node.time);
                 timeHtml = `<span class="time-label">${d.getFullYear()}/${('0'+(d.getMonth()+1)).slice(-2)}/${('0'+d.getDate()).slice(-2)} ${('0'+d.getHours()).slice(-2)}:${('0'+d.getMinutes()).slice(-2)}</span>`;
             }
 
-            // --- 2. 場所の判定とクリーニング ---
+            // --- 場所の抽出ロジック ---
             let searchCity = "";
             let isRealLocation = false;
 
-            // ハイフンで始まる場合や空の場合は「場所なし」
             if (fullDesc && !fullDesc.startsWith("-")) {
-                searchCity = fullDesc.includes(" - ") ? fullDesc.split(" - ")[0].trim() : fullDesc;
+                // 1. ハイフンで分割して左側を取得
+                let rawLocation = fullDesc.includes(" - ") ? fullDesc.split(" - ")[0].trim() : fullDesc;
                 
-                // 状態のみの単語リスト
-                const statusOnly = ["引受", "受付", "中継", "保留", "税関", "調査中", "不在", "変更", "希望", "持ち戻り", "出発", "通過", "輸送中", "配達完了"];
-                // 拠点を示すキーワード
-                const locKeys = ["局", "店", "分室", "ベース", "センター", "営業所", "作業店", "支店", "（", "(", "市", "区"];
+                // 2. 郵便局特有の「拠点名 - ステータス」が連結している場合のゴミ掃除
+                // 例: "宇治郵便局 - 引受" の左側が "宇治郵便局" になるように
+                const statusSuffixes = ["引受", "中継", "到着", "持ち戻り", "受付", "通過", "発送済み", "完了"];
+                statusSuffixes.forEach(s => {
+                    if (rawLocation.endsWith(s)) {
+                        rawLocation = rawLocation.replace(s, "").trim();
+                    }
+                });
 
-                const isStatusWord = statusOnly.some(word => searchCity === word);
+                searchCity = rawLocation;
+
+                // 3. 地名判定
+                const ignoreList = ["インターネット", "ＩＶＲ", "IVR", "お客様", "問い合わせ", "不在"];
+                const locKeys = ["郵便局", "店", "分室", "ベース", "センター", "営業所", "作業店", "支店", "（", "(", "市", "区"];
+
+                const isIgnored = ignoreList.some(word => searchCity.includes(word));
                 const hasLocKey = locKeys.some(k => searchCity.includes(k));
                 
-                // 「状態語そのもの」ではなく、かつ「拠点キー」を含む場合に場所とみなす
-                if (!isStatusWord && (hasLocKey || searchCity.length >= 4)) {
+                if (!isIgnored && hasLocKey && searchCity.length >= 2) {
                     isRealLocation = true;
                 }
             }
 
-            // --- 3. 履歴リストへ追加 ---
+            // --- 履歴リスト表示 ---
             const item = document.createElement("div");
             item.className = `status-item ${!isRealLocation ? 'no-map' : ''}`;
             item.innerHTML = `<b>${status}</b><br>${timeHtml}${fullDesc}`;
             historyList.appendChild(item);
 
-            // --- 4. 地図ピン打ち (重複チェック付) ---
+            // --- マップピン追加 (重複排除) ---
             if (isRealLocation && !usedLocations.has(searchCity)) {
                 const coord = await getBestCoordWithPlaces(searchCity);
                 if (coord) {
                     pathCoords.push(coord);
-                    usedLocations.add(searchCity); // この場所は記録済みとする
+                    usedLocations.add(searchCity);
                     
                     const marker = new google.maps.Marker({
                         position: coord,
